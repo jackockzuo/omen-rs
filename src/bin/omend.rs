@@ -1,7 +1,8 @@
 //! omend —— 后台守护进程。
 //!
 //! - 每 N 秒 hold EC（0xBA + 0x95 + platform_profile），N 由 OMEN_HOLD_INTERVAL 决定
-//! - 若设置了 OMEN_FAN_CURVE，hold 后读温度 → 曲线插值 → 自动调风扇
+//! - 若设置了 OMEN_FAN_CURVE，hold 后读 CPU 温度（hwmon coretemp/k10temp）→ 曲线插值 →
+//!   自动调风扇；每轮都重发 0x2E（固件约 120s 后回退手动风扇，见 COMMAND-REFERENCE §13）
 //! - Unix socket 接收命令，用 dyn Command 分发
 //! - SIGTERM 优雅退出
 //! - 日志走 tracing → stderr → journald
@@ -29,7 +30,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::time;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 fn hold_interval() -> u64 {
     std::env::var("OMEN_HOLD_INTERVAL")
@@ -98,15 +99,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 transport::read(CMD_PERF, CommandType::FanCount, 4).ok();
                 apply_perf();
                 if let Some(c) = &curve {
-                    let sensor = commands::sensors::get();
-                    let temp = sensor.max_temp().unwrap_or(0);
-                    let target = c.evaluate(temp);
-                    let prev = lf.swap(target, Ordering::SeqCst);
-                    if prev != target {
-                        match commands::fan::set(target, target) {
-                            Ok(()) => info!(temp, speed = target, "风扇曲线已更新"),
-                            Err(e) => error!(error = %e, "风扇曲线设置失败"),
+                    match commands::sensors::cpu_temp() {
+                        Some(temp) => {
+                            let target = c.evaluate(temp);
+                            let prev = lf.swap(target, Ordering::SeqCst);
+                            // 无论档位是否变化都重发：固件看门狗约 120s 后回退手动风扇
+                            match commands::fan::set(target, target) {
+                                Ok(()) if prev != target => {
+                                    info!(temp, speed = target, "风扇曲线已更新");
+                                }
+                                Ok(()) => debug!(temp, speed = target, "风扇曲线保持"),
+                                Err(e) => error!(error = %e, "风扇曲线设置失败"),
+                            }
                         }
+                        None => warn!("CPU 温度不可用（coretemp/k10temp），本轮跳过风扇调整"),
                     }
                 }
             })
