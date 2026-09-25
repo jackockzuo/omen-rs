@@ -1,0 +1,14 @@
+# Rust
+/target
+
+# nix-direnv
+/.direnv
+/result
+/result-*
+
+# editor / OS
+*.swp
+.DS_Store
+
+# opencode
+.omo/
