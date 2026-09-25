@@ -44,7 +44,10 @@
         { config, lib, pkgs, ... }:
         let
           cfg = config.services.omen;
-          omen-pkg = self.packages.${pkgs.system}.default;
+          # pkgs.system 在 nixpkgs 2025-10-28 起触发弃用告警
+          # （"'system' has been renamed to/replaced by 'stdenv.hostPlatform.system'"），
+          # 必须用 stdenv.hostPlatform.system；注意在跨编译主机上两者等价（hostPlatform = 主机）。
+          omen-pkg = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
         in
         {
           options.services.omen = {
