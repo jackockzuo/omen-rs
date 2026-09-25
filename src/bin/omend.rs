@@ -32,6 +32,14 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::time;
 use tracing::{debug, error, info, warn};
 
+fn init_logging() {
+    // fmt::init() 的默认特性不读 RUST_LOG（本次修复的 bug）；回退 info 对应
+    // NixOS module 的 logLevel 默认值，保持未设置时行为不变。
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
 fn hold_interval() -> u64 {
     std::env::var("OMEN_HOLD_INTERVAL")
         .ok()
@@ -60,7 +68,7 @@ fn apply_perf() {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
+    init_logging();
 
     let interval = hold_interval();
     let mode = perf_mode();
