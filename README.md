@@ -26,7 +26,9 @@ HP OMEN 笔记本 BIOS/EC 控制的 Rust 封装 —— CLI + 守护进程。
 守护进程 `omend`：
 
 - **hold 看门狗**：每 N 秒重刷 EC 0xBA/0x95 + platform_profile（对抗 EC 复位）
-- **温度曲线风扇控制**：读最高传感器温度 → 线性插值 → 自动调风扇
+- **温度曲线风扇控制**：读 CPU 温度（hwmon coretemp/k10temp）→ 线性插值 → 自动调风扇
+  （不用 WMAA 传感器 max：PCH 空闲即 60°C+，会把风扇钉在高转速）
+- **每轮重发 0x2E**：固件约 120s 后回退手动风扇（见 COMMAND-REFERENCE §13）
 - **Unix socket** `/tmp/omend.sock`：`omen status` / `omen remote <cmd>` 免 root 查询
 - **日志**：tracing → stderr → journald（`journalctl -u omend`）
 

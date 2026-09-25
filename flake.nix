@@ -89,7 +89,8 @@
               });
               default = [ ];
               description = ''
-                温度曲线点列表（按温度升序），omend 根据最高传感器温度线性插值调风扇。
+                温度曲线点列表（按温度升序），omend 根据 CPU 温度（hwmon coretemp/k10temp）
+                线性插值调风扇。
                 为空则不自动调风扇，由 BIOS 控制。
                 示例: [ { temp=50; speed=30; } { temp=65; speed=50; } { temp=80; speed=80; } { temp=90; speed=100; } ]
               '';
