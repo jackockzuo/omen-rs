@@ -89,15 +89,38 @@ enum Cmd {
     },
 }
 
+/// 读取类命令统一路由：root 直连硬件；非 root 经 omend socket（免 sudo）。
+/// socket 不可用时回退直连，报错里带上原因提示。
+fn run_read<E, F>(name: &str, json: bool, direct: F) -> anyhow::Result<()>
+where
+    F: FnOnce(bool) -> Result<(), E>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    if omen_rs::client::is_root() {
+        return direct(json).map_err(Into::into);
+    }
+    match omen_rs::client::query_via_daemon(name, json) {
+        Some(resp) => {
+            print!("{resp}");
+            Ok(())
+        }
+        None => direct(json).map_err(|e| {
+            anyhow::Error::from(e)
+                .context("未 root 且 omend 未运行：sudo 运行，或 systemctl start omend")
+        }),
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Cmd::Info => omen_rs::commands::info::print(cli.json).context("读取系统信息失败")?,
-        Cmd::Sensors => {
-            omen_rs::commands::sensors::print(cli.json).context("读取传感器信息失败")?
-        }
+        Cmd::Info => run_read("info", cli.json, omen_rs::commands::info::print)
+            .context("读取系统信息失败")?,
+        Cmd::Sensors => run_read("sensors", cli.json, omen_rs::commands::sensors::print)
+            .context("读取传感器信息失败")?,
         Cmd::Gpu { sub } => match sub {
-            None => omen_rs::commands::gpu::print(cli.json).context("读取 GPU 信息失败")?,
+            None => run_read("gpu", cli.json, omen_rs::commands::gpu::print)
+                .context("读取 GPU 信息失败")?,
             Some(GpuSub::Set { ctgp, ppab, dstate, gps }) => {
                 omen_rs::commands::gpu::set_power(ctgp, ppab, dstate, gps)
                     .context("设置 GPU 功率失败")?;
@@ -105,7 +128,8 @@ fn main() -> anyhow::Result<()> {
             }
         },
         Cmd::Fan { sub } => match sub {
-            None => omen_rs::commands::fan::print(cli.json).context("读取风扇转速失败")?,
+            None => run_read("fan", cli.json, omen_rs::commands::fan::print)
+                .context("读取风扇转速失败")?,
             Some(FanSub::Set { f1, f2 }) => match f2 {
                 Some(speed) => {
                     omen_rs::commands::fan::set(f1, speed).context("设置风扇转速失败")?;
@@ -142,9 +166,8 @@ fn main() -> anyhow::Result<()> {
                 println!("omend 用法: OMEN_FAN_CURVE=\"{curve}\"");
             }
         },
-        Cmd::Adapter => {
-            omen_rs::commands::adapter::print(cli.json).context("读取智能适配器失败")?
-        }
+        Cmd::Adapter => run_read("adapter", cli.json, omen_rs::commands::adapter::print)
+            .context("读取智能适配器失败")?,
         Cmd::Battery { sub } => match sub {
             BatterySub::On => {
                 omen_rs::commands::battery::set_care(true).context("开启电池养护失败")?;
@@ -167,14 +190,16 @@ fn main() -> anyhow::Result<()> {
             omen_rs::commands::perf::balanced().context("恢复平衡失败")?;
             println!("已恢复平衡模式 (EC 0xBA=0, platform_profile=balanced)");
         },
-        Cmd::Perf => {
-            let out = omen_rs::commands::perf::format_status(cli.json)
-                .context("读取 EC 性能状态失败")?;
-            println!("{out}");
-        },
-        Cmd::Remote { cmd } => match omen_rs::client::send(&cmd) {
-            Ok(resp) => print!("{resp}"),
-            Err(_) => println!("omend 未运行"),
+        Cmd::Perf => run_read("perf", cli.json, |json| {
+            omen_rs::commands::perf::format_status(json).map(|out| println!("{out}"))
+        })
+        .context("读取 EC 性能状态失败")?,
+        Cmd::Remote { cmd } => {
+            let payload = if cli.json { format!("{cmd} --json") } else { cmd };
+            match omen_rs::client::send(&payload) {
+                Ok(resp) => print!("{resp}"),
+                Err(_) => println!("omend 未运行"),
+            }
         },
         Cmd::Raw {
             command,

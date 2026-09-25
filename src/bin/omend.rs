@@ -3,7 +3,8 @@
 //! - 每 N 秒 hold EC（0xBA + 0x95 + platform_profile），N 由 OMEN_HOLD_INTERVAL 决定
 //! - 若设置了 OMEN_FAN_CURVE，hold 后读 CPU 温度（hwmon coretemp/k10temp）→ 曲线插值 →
 //!   自动调风扇；每轮都重发 0x2E（固件约 120s 后回退手动风扇，见 COMMAND-REFERENCE §13）
-//! - Unix socket 接收命令，用 dyn Command 分发
+//! - Unix socket 接收命令，用 dyn Command 分发；请求行 = `<cmd> [--json]`（见 client::parse_query）。
+//!   ⚠️ socket 权限 0666（任意本地用户可连），registry() 必须只放只读命令，写命令禁止入内
 //! - SIGTERM 优雅退出
 //! - 日志走 tracing → stderr → journald
 //!
@@ -151,15 +152,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             result = listener.accept() => {
                 let (mut stream, _) = result?;
-                let mut buf = [0u8; 256];
-                let n = stream.read(&mut buf).await?;
-                let cmd = std::str::from_utf8(&buf[..n])?.trim();
-                let response = match cmd {
-                    "status" => "omend running\n".to_string(),
-                    name => match handlers.iter().find(|h| h.name() == name) {
-                        Some(h) => {
-                            let h_clone: Box<dyn Command> = h.boxed_clone();
-                            match tokio::task::spawn_blocking(move || h_clone.run(false)).await {
+    let mut buf = [0u8; 256];
+    let n = stream.read(&mut buf).await?;
+    let line = std::str::from_utf8(&buf[..n])?.trim();
+    let (name, json) = omen_rs::client::parse_query(line);
+    let response = match name {
+        "status" => "omend running\n".to_string(),
+        name => match handlers.iter().find(|h| h.name() == name) {
+            Some(h) => {
+                let h_clone: Box<dyn Command> = h.boxed_clone();
+                match tokio::task::spawn_blocking(move || h_clone.run(json)).await {
                                 Ok(Ok(output)) => {
                                     info!(cmd = name, "命令执行成功");
                                     format!("{output}\n")
