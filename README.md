@@ -29,8 +29,8 @@ HP OMEN 笔记本 BIOS/EC 控制的 Rust 封装 —— CLI + 守护进程。
 - **温度曲线风扇控制**：读 CPU 温度（hwmon coretemp/k10temp）→ 线性插值 → 自动调风扇
   （不用 WMAA 传感器 max：PCH 空闲即 60°C+，会把风扇钉在高转速）
 - **每轮重发 0x2E**：固件约 120s 后回退手动风扇（见 COMMAND-REFERENCE §13）
-- **Unix socket** `/tmp/omend.sock`：`omen status` / `omen remote <cmd>` 免 root 查询
-- **日志**：tracing → stderr → journald（`journalctl -u omend`）
+- **Unix socket** `/tmp/omend.sock`：读取类命令（info/sensors/fan/gpu/adapter/perf）在非 root 下自动经 socket 免 sudo 执行；`omen status` / `omen remote <cmd>` 直连 socket
+- **日志**：tracing → stderr → journald（`journalctl -u omend`），级别由 `logLevel`（RUST_LOG）控制，默认 info
 
 ## 安装
 
@@ -79,7 +79,7 @@ Module 自动配置：内核模块（`hp-wmi` / `acpi_call` / `ec_sys write_supp
 ## 开发
 
 ```bash
-nix develop --command cargo test    # 33 单元 + 集成测试
+nix develop --command cargo test    # 46 单元 + 1 集成测试
 nix develop --command cargo clippy  # 零 warning
 sudo $(nix build .#default --print-out-paths)/bin/omen info
 ```
