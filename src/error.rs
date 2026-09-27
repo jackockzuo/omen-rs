@@ -38,4 +38,8 @@ pub enum OmenError {
     /// 参数（十六进制/数字）解析失败
     #[error("参数解析失败: {0}")]
     Parse(#[from] std::num::ParseIntError),
+
+    /// 功耗配置应用失败（携带具体路径与原因）
+    #[error("功耗配置应用失败: {0}")]
+    ApplyFailed(String),
 }

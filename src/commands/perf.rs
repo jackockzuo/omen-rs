@@ -1,23 +1,16 @@
-//! 性能解锁：EC 0xBA 功耗倍率 + EC 0x95 性能模式 + ACPI platform_profile。
+//! 兼容层：`perf` / `unlock` / `balanced` 命令。
 //!
-//! 三个路径协同：
-//!   1. EC 0xBA = 5        → 热功耗倍率（55W → 130W 解锁）
-//!   2. EC 0x95 = mode byte → EC 性能模式寄存器
-//!   3. platform_profile    → /sys/firmware/acpi/platform_profile（固件性能序列）
-//!
-//! 参考 omencore `perf --mode performance --power-limit 5`。
+//! 底层实现已迁到 [`crate::commands::power_profile`]（功耗配置抽象）。
+//! 这里保留旧的函数签名与 `perf --json` 输出形状，供 NixOS module、旧脚本与
+//! `thermal status` 继续使用。
 
-use crate::ec;
-use crate::error::OmenError;
 use serde::Serialize;
-use std::fs;
-use std::path::Path;
 
-const EC_POWER_LIMIT: u16 = 0xBA;
-const EC_PERF_MODE: u16 = 0x95;
-const PLATFORM_PROFILE_PATH: &str = "/sys/firmware/acpi/platform_profile";
+use crate::commands::power_profile::{self, PowerProfile};
+use crate::error::OmenError;
 
-#[derive(Serialize)]
+/// 旧版 `perf --json` 的状态形状（字段与历史版本一致）。
+#[derive(Debug, Serialize)]
 pub struct PerfStatus {
     pub ec_0xba: u8,
     pub ec_0x95: u8,
@@ -25,34 +18,32 @@ pub struct PerfStatus {
     pub unlocked: bool,
 }
 
+fn apply_legacy(profile: PowerProfile) -> Result<(), OmenError> {
+    let report = power_profile::apply(profile, false);
+    if report.ec_ok() {
+        Ok(())
+    } else {
+        Err(OmenError::ApplyFailed(
+            report.first_error().unwrap_or("未知错误").to_string(),
+        ))
+    }
+}
+
 pub fn unlock() -> Result<(), OmenError> {
-    fs::write(PLATFORM_PROFILE_PATH, "performance")
-        .map_err(|_| OmenError::AcpiUnavailable)?;
-    ec::write_verified(EC_POWER_LIMIT, 5)?;
-    ec::write(EC_PERF_MODE, 0x05)?;
-    Ok(())
+    apply_legacy(PowerProfile::Performance)
 }
 
 pub fn balanced() -> Result<(), OmenError> {
-    if Path::new(PLATFORM_PROFILE_PATH).exists() {
-        fs::write(PLATFORM_PROFILE_PATH, "balanced").ok();
-    }
-    ec::write_verified(EC_POWER_LIMIT, 0)?;
-    ec::write(EC_PERF_MODE, 0x01)?;
-    Ok(())
+    apply_legacy(PowerProfile::Balanced)
 }
 
 pub fn status() -> Result<PerfStatus, OmenError> {
-    let ec_0xba = ec::read(EC_POWER_LIMIT)?;
-    let ec_0x95 = ec::read(EC_PERF_MODE)?;
-    let platform_profile = fs::read_to_string(PLATFORM_PROFILE_PATH)
-        .ok()
-        .map(|s| s.trim().to_string());
+    let s = power_profile::PowerProfileStatus::read()?;
     Ok(PerfStatus {
-        ec_0xba,
-        ec_0x95,
-        platform_profile,
-        unlocked: ec_0xba == 5,
+        ec_0xba: s.ec_0xba,
+        ec_0x95: s.ec_0x95,
+        platform_profile: s.platform_profile,
+        unlocked: s.ec_0xba == 5,
     })
 }
 

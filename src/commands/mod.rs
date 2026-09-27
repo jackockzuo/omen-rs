@@ -10,6 +10,7 @@ pub mod gpu;
 pub mod info;
 pub mod perf;
 pub mod power;
+pub mod power_profile;
 pub mod raw;
 pub mod sensors;
 pub mod thermal;
@@ -23,10 +24,13 @@ pub trait Command: Send + Sync {
 pub fn registry() -> Vec<Box<dyn Command>> {
     vec![
         Box::new(adapter::AdapterCommand),
+        Box::new(battery::BatteryStatusCommand),
         Box::new(fan::FanCommand),
         Box::new(gpu::GpuCommand),
         Box::new(info::InfoCommand),
         Box::new(perf::PerfCommand),
+        Box::new(power_profile::PowerProfileCommand),
         Box::new(sensors::SensorsCommand),
+        Box::new(thermal::ThermalStatusCommand),
     ]
 }

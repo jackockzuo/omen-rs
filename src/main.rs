@@ -1,6 +1,10 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use omen_rs::commands::{power::PowerTarget, thermal::ThermalMode};
+use omen_rs::commands::{
+    power::PowerTarget,
+    power_profile::{self, PowerProfile},
+    thermal::ThermalMode,
+};
 use std::str::FromStr;
 #[derive(Parser)]
 #[command(name = "omen", version, about = "OMEN BIOS 安全封装")]
@@ -34,6 +38,37 @@ enum BatterySub {
     On,
     /// 关闭电池养护
     Off,
+    /// 读取电池养护状态
+    Status,
+}
+
+#[derive(Subcommand)]
+enum PowerSub {
+    /// 设置 TPP 总功耗包络
+    Tpp { watts: u8 },
+    /// 设置 PL1/PL2 功耗墙
+    #[command(name = "pl1pl2")]
+    Pl1Pl2 { watts: u8 },
+    /// 设置 PL4 峰值功耗
+    Pl4 { watts: u8 },
+    /// 功耗配置（EC 0xBA/0x95 + platform_profile）
+    Profile {
+        #[command(subcommand)]
+        sub: Option<ProfileSub>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProfileSub {
+    /// 应用功耗配置（balanced | performance）
+    Set {
+        name: String,
+        /// 即使当前值一致也强制重写（对抗 BIOS 看门狗）
+        #[arg(long)]
+        force: bool,
+    },
+    /// 校验三路一致性（不一致非零退出）
+    Verify,
 }
 
 #[derive(Subcommand)]
@@ -61,11 +96,11 @@ enum Cmd {
     },
     /// 查询 omend 守护进程状态
     Status,
-    /// 解锁性能（EC 0xBA=5 + platform_profile=performance）
+    /// 解锁性能（等价 `power profile set performance`）
     Unlock,
-    /// 恢复平衡模式
+    /// 恢复平衡模式（等价 `power profile set balanced`）
     Balanced,
-    /// EC 性能状态（0xBA/0x95/platform_profile）
+    /// 旧版 EC 性能状态（兼容；推荐 `power profile`）
     Perf,
     /// 通过 omend 远程执行命令
     Remote { cmd: String },
@@ -80,13 +115,22 @@ enum Cmd {
         /// 数据字节，hex（如 00 00 00 00）
         data: Vec<String>,
     },
+    /// 热策略设置/状态读取（`thermal status` 或省略参数读取状态）
     Thermal {
-        mode: String,
+        /// 目标热策略（performance/balanced/cool/quiet/extreme）；省略或 `status` 读取状态
+        mode: Option<String>,
     },
+    /// 功率墙与功耗配置
     Power {
-        target: String,
-        watts: u8,
+        #[command(subcommand)]
+        sub: PowerSub,
     },
+}
+
+fn set_power_wall(name: &str, target: PowerTarget, watts: u8) -> anyhow::Result<()> {
+    omen_rs::commands::power::set(target).context("设置功率墙失败")?;
+    println!("功率已设: {name} = {watts}W");
+    Ok(())
 }
 
 /// 读取类命令统一路由：root 直连硬件；非 root 经 omend socket（免 sudo）。
@@ -177,18 +221,28 @@ fn main() -> anyhow::Result<()> {
                 omen_rs::commands::battery::set_care(false).context("关闭电池养护失败")?;
                 println!("电池养护已关闭");
             }
+            BatterySub::Status => {
+                run_read("battery", cli.json, omen_rs::commands::battery::print_status)
+                    .context("读取电池养护状态失败")?;
+            }
         },
         Cmd::Status => match omen_rs::client::send("status") {
             Ok(resp) => print!("{resp}"),
             Err(_) => println!("omend 未运行"),
         },
         Cmd::Unlock => {
-            omen_rs::commands::perf::unlock().context("性能解锁失败")?;
-            println!("性能已解锁 (EC 0xBA=5, platform_profile=performance)");
+            let report = power_profile::apply(PowerProfile::Performance, false);
+            println!("{}", power_profile::format_report(PowerProfile::Performance, &report));
+            if let Some(e) = report.first_error() {
+                return Err(anyhow::anyhow!("性能解锁部分失败: {e}"));
+            }
         },
         Cmd::Balanced => {
-            omen_rs::commands::perf::balanced().context("恢复平衡失败")?;
-            println!("已恢复平衡模式 (EC 0xBA=0, platform_profile=balanced)");
+            let report = power_profile::apply(PowerProfile::Balanced, false);
+            println!("{}", power_profile::format_report(PowerProfile::Balanced, &report));
+            if let Some(e) = report.first_error() {
+                return Err(anyhow::anyhow!("恢复平衡部分失败: {e}"));
+            }
         },
         Cmd::Perf => run_read("perf", cli.json, |json| {
             omen_rs::commands::perf::format_status(json).map(|out| println!("{out}"))
@@ -208,30 +262,52 @@ fn main() -> anyhow::Result<()> {
             data,
         } => omen_rs::commands::raw::run(&command, &ctype, mode, &data)
             .context("执行 RAW 指令失败")?,
-        Cmd::Thermal { mode } => {
-            let parsed: ThermalMode =
-                ThermalMode::from_str(&mode).context("解析热策略模式失败")?;
-            let caps = omen_rs::capability::caps().context("读取本机能力失败")?;
-            let design = &caps.design;
-            omen_rs::commands::thermal::set(parsed, design.thermal_version)
-                .context("设置热策略失败")?;
-            println!("热策略已设为: {} (V{})", mode, design.thermal_version);
-        }
-        Cmd::Power { target, watts } => {
-            let t = match target.as_str() {
-                "tpp" => PowerTarget::Tpp(watts),
-                "pl1pl2" => PowerTarget::Pl1Pl2(watts),
-                "pl4" => PowerTarget::Pl4(watts),
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "未知功率目标: {}（可选: tpp/pl1pl2/pl4）",
-                        target
-                    ))
+        Cmd::Thermal { mode } => match mode.as_deref() {
+            // `omen thermal`（无参）与 `omen thermal status` 都读取当前状态。
+            Some("status") | None => {
+                run_read("thermal", cli.json, omen_rs::commands::thermal::print_status)
+                    .context("读取热策略状态失败")?;
+            }
+            Some(mode) => {
+                let parsed: ThermalMode =
+                    ThermalMode::from_str(mode).context("解析热策略模式失败")?;
+                let caps = omen_rs::capability::caps().context("读取本机能力失败")?;
+                let design = &caps.design;
+                omen_rs::commands::thermal::set(parsed, design.thermal_version)
+                    .context("设置热策略失败")?;
+                println!("热策略已设为: {} (V{})", mode, design.thermal_version);
+            }
+        },
+        Cmd::Power { sub } => match sub {
+            PowerSub::Tpp { watts } => set_power_wall("tpp", PowerTarget::Tpp(watts), watts)?,
+            PowerSub::Pl1Pl2 { watts } => set_power_wall("pl1pl2", PowerTarget::Pl1Pl2(watts), watts)?,
+            PowerSub::Pl4 { watts } => set_power_wall("pl4", PowerTarget::Pl4(watts), watts)?,
+            PowerSub::Profile { sub: None } => {
+                run_read("power", cli.json, power_profile::print_status)
+                    .context("读取功耗配置失败")?;
+            }
+            PowerSub::Profile { sub: Some(ProfileSub::Set { name, force }) } => {
+                let profile: PowerProfile =
+                    name.parse().context("解析功耗配置失败（可选 balanced/performance）")?;
+                let report = power_profile::apply(profile, force);
+                println!("{}", power_profile::format_report(profile, &report));
+                if let Some(e) = report.first_error() {
+                    return Err(anyhow::anyhow!("功耗配置部分失败: {e}"));
                 }
-            };
-            omen_rs::commands::power::set(t).context("设置功率墙失败")?;
-            println!("功率已设: {} = {}W", target, watts);
-        }
+            }
+            PowerSub::Profile { sub: Some(ProfileSub::Verify) } => {
+                let s = power_profile::verify().context("读取功耗配置失败")?;
+                if s.consistent {
+                    println!("功耗配置一致: {}", s.profile);
+                } else {
+                    println!("功耗配置不一致: {}", s.profile);
+                    for i in &s.inconsistencies {
+                        println!("  - {i}");
+                    }
+                    return Err(anyhow::anyhow!("功耗配置不一致"));
+                }
+            }
+        },
     }
     Ok(())
 }

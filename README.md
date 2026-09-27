@@ -16,20 +16,25 @@ HP OMEN 笔记本 BIOS/EC 控制的 Rust 封装 —— CLI + 守护进程。
 | `omen fan curve <曲线>` | 预览温度曲线插值 | — |
 | `omen gpu` / `omen gpu set` | GPU 功率读写（cTGP/PPAB/DState/GPS） | WMAA 0x22 |
 | `omen thermal <mode>` | 热策略（performance/balanced/cool/…） | WMAA 0x1A |
+| `omen thermal status` | 读取可观测热/性能状态（0x1A 只写，故读 platform_profile + EC 0x95） | EC + platform_profile |
 | `omen power tpp/pl1pl2/pl4 <W>` | 功率墙 | WMAA 0x29 |
+| `omen power profile` | 读功耗配置（三路实际值 + 一致性） | EC 0xBA/0x95 + platform_profile |
+| `omen power profile set <balanced\|performance> [--force]` | 应用功耗配置（幂等；`--force` 强制重写） | EC 0xBA/0x95 + platform_profile |
+| `omen power profile verify` | 校验三路一致性（不一致非零退出） | EC 0xBA/0x95 + platform_profile |
 | `omen adapter` | 智能适配器信息 | WMAA 0x0F |
 | `omen battery on/off` | 电池养护（充电限制 80%） | WMAA 0x24 |
-| `omen unlock` / `omen balanced` | EC 功耗解锁 / 恢复（55W → ~130W） | EC 0xBA/0x95 + platform_profile |
-| `omen perf [--json]` | EC 性能状态 | EC RAM 读 |
+| `omen battery status` | 读取电池养护状态 | WMAA 0x24 |
+| `omen unlock` / `omen balanced` | 功耗配置别名（等价 `power profile set`） | EC 0xBA/0x95 + platform_profile |
+| `omen perf [--json]` | 旧版 EC 性能状态（兼容；推荐 `power profile`） | EC RAM 读 |
 | `omen raw <cmd> <type> …` | 原始 WMAA 调用（危险，需 root） | /proc/acpi/call |
 
 守护进程 `omend`：
 
-- **hold 看门狗**：每 N 秒重刷 EC 0xBA/0x95 + platform_profile（对抗 EC 复位）
+- **hold 看门狗**：每 N 秒 `power_profile::apply(profile, force=true)` 重刷 EC 0xBA/0x95 + platform_profile（对抗 EC 复位）
 - **温度曲线风扇控制**：读 CPU 温度（hwmon coretemp/k10temp）→ 线性插值 → 自动调风扇
   （不用 WMAA 传感器 max：PCH 空闲即 60°C+，会把风扇钉在高转速）
 - **每轮重发 0x2E**：固件约 120s 后回退手动风扇（见 COMMAND-REFERENCE §13）
-- **Unix socket** `/tmp/omend.sock`：读取类命令（info/sensors/fan/gpu/adapter/perf）在非 root 下自动经 socket 免 sudo 执行；`omen status` / `omen remote <cmd>` 直连 socket
+- **Unix socket** `/tmp/omend.sock`：读取类命令（info/sensors/fan/gpu/adapter/perf/battery/thermal/power）在非 root 下自动经 socket 免 sudo 执行；`omen status` / `omen remote <cmd>` 直连 socket
 - **日志**：tracing → stderr → journald（`journalctl -u omend`），级别由 `logLevel`（RUST_LOG）控制，默认 info
 
 ## 安装

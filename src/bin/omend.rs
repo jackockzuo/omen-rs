@@ -17,7 +17,7 @@
 
 use omen_rs::{
     commands,
-    commands::Command,
+    commands::{power_profile::PowerProfile, Command},
     fan_curve::FanCurve,
     protocol::command::{CommandType, CMD_PERF},
     transport,
@@ -57,13 +57,20 @@ fn perf_mode() -> &'static str {
 
 fn apply_perf() {
     let mode = perf_mode();
-    let result = match mode {
-        "performance" => commands::perf::unlock(),
-        _ => commands::perf::balanced(),
+    let profile = match mode {
+        "performance" => PowerProfile::Performance,
+        _ => PowerProfile::Balanced,
     };
-    match result {
-        Ok(()) => info!(mode, "hold: EC 性能已刷新"),
-        Err(e) => error!(mode, error = %e, "hold: EC 刷新失败"),
+    // 看门狗场景：force=true，无条件重刷三路，对抗 BIOS 自动回退。
+    let report = commands::power_profile::apply(profile, true);
+    if report.ec_ok() {
+        info!(mode, "hold: 功耗配置已刷新");
+    } else {
+        error!(
+            mode,
+            error = report.first_error().unwrap_or("未知错误"),
+            "hold: 功耗配置刷新失败"
+        );
     }
 }
 

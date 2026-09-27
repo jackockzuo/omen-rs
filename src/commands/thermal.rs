@@ -3,6 +3,8 @@
 
 use std::{fmt::Display, str::FromStr};
 
+use serde::Serialize;
+
 use crate::{
     capability::Cap,
     error::OmenError,
@@ -78,6 +80,71 @@ pub fn set(mode: ThermalMode, thermal_version: u8) -> Result<(), OmenError> {
     let payload = [0xFF, mode.mode_byte(thermal_version)?];
     transport::wmaa(CMD_PERF, CommandType::Thermal, &payload, 0)?;
     Ok(())
+}
+
+/// 可观测的热/性能状态。
+///
+/// 注意：WMAA 0x1A 是「接受无回读」的写命令，固件不提供当前热策略（cool/quiet/extreme）
+/// 的读回（见 docs/COMMAND-REFERENCE.md §9）。这里退而求其次读 EC 0x95 / 0xBA 与
+/// platform_profile，推导 performance / balanced / unknown。
+#[derive(Debug, Serialize)]
+pub struct ThermalStatus {
+    pub platform_profile: Option<String>,
+    pub ec_0x95: u8,
+    pub ec_0xba: u8,
+    pub unlocked: bool,
+    pub mode: String,
+}
+
+/// 读取可观测的热/性能状态。
+pub fn status() -> Result<ThermalStatus, OmenError> {
+    let p = crate::commands::power_profile::PowerProfileStatus::read()?;
+    let mode = match p.profile.as_str() {
+        "performance" | "balanced" => p.profile.clone(),
+        _ => "unknown".to_string(),
+    };
+    Ok(ThermalStatus {
+        platform_profile: p.platform_profile,
+        ec_0x95: p.ec_0x95,
+        ec_0xba: p.ec_0xba,
+        unlocked: p.ec_0xba == 5,
+        mode,
+    })
+}
+
+pub fn format_status(json: bool) -> Result<String, OmenError> {
+    let s = status()?;
+    if json {
+        Ok(serde_json::to_string_pretty(&s)?)
+    } else {
+        Ok(format!(
+            "热/性能模式  : {}\nplatform_profile: {}\nEC 0x95      : 0x{:02X}\nEC 0xBA      : {} ({})",
+            s.mode,
+            s.platform_profile.unwrap_or_else(|| "未知".into()),
+            s.ec_0x95,
+            s.ec_0xba,
+            if s.unlocked { "已解锁" } else { "未解锁" },
+        ))
+    }
+}
+
+pub fn print_status(json: bool) -> Result<(), OmenError> {
+    println!("{}", format_status(json)?);
+    Ok(())
+}
+
+/// socket 侧只读命令：`thermal`（写命令 `thermal <mode>` 不入 registry）。
+pub struct ThermalStatusCommand;
+impl super::Command for ThermalStatusCommand {
+    fn name(&self) -> &'static str {
+        "thermal"
+    }
+    fn run(&self, json: bool) -> Result<String, OmenError> {
+        format_status(json)
+    }
+    fn boxed_clone(&self) -> Box<dyn super::Command> {
+        Box::new(Self)
+    }
 }
 
 #[cfg(test)]
