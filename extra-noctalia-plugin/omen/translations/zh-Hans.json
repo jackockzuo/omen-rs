@@ -1,0 +1,82 @@
+{
+  "notify": {
+    "title": "OMEN 控制",
+    "write-failed": "命令执行失败：{cmd}",
+    "write-spawn-failed": "无法启动写命令。",
+    "no-pkexec": "未安装 pkexec，写操作将失败。"
+  },
+  "settings": {
+    "omen_bin": {
+      "label": "omen 可执行文件",
+      "description": "omen CLI 的路径。使用 pkexec 写操作时请填绝对路径（如 /run/current-system/sw/bin/omen）。"
+    },
+    "write_cmd": {
+      "label": "提权方式",
+      "description": "root 写命令的执行方式。",
+      "options": {
+        "pkexec": "pkexec（Polkit 弹窗）",
+        "sudo": "sudo"
+      }
+    },
+    "poll_interval": {
+      "label": "轮询间隔",
+      "description": "重新读取传感器/风扇/热模式/电池的间隔（毫秒）。"
+    },
+    "show_label": {
+      "label": "显示文字"
+    },
+    "show_temps": {
+      "label": "显示温度"
+    }
+  },
+  "panel": {
+    "title": "OMEN 控制",
+    "subtitle": "HP OMEN BIOS/EC",
+    "omend": "omend",
+    "omend-active": "运行中",
+    "omend-down": "未运行",
+    "fan": "风扇",
+    "temps": "温度",
+    "thermal": "热模式",
+    "power-profile": "功耗配置",
+    "battery": "电池养护",
+    "yes": "是",
+    "no": "否",
+    "on": "开",
+    "off": "关",
+    "power": {
+      "balanced": "均衡",
+      "performance": "性能解锁"
+    },
+    "mode": {
+      "performance": "性能",
+      "balanced": "均衡",
+      "cool": "清凉",
+      "quiet": "安静",
+      "extreme": "极限"
+    },
+    "power-set": "功耗配置",
+    "thermal-set": "热模式",
+    "fan-set": "风扇转速",
+    "fan-apply": "应用",
+    "fan-auto": "恢复自动",
+    "battery-toggle": "切换电池养护"
+  },
+  "widget": {
+    "unavailable": "omen 不可用",
+    "omend": "omend",
+    "omend-active": "运行中",
+    "omend-down": "未运行",
+    "fan": "风扇",
+    "ambient": "环境温度",
+    "thermal": "热模式",
+    "power": "功耗配置",
+    "yes": "是",
+    "no": "否",
+    "battery": "电池养护",
+    "on": "开",
+    "off": "关",
+    "hint": "提示",
+    "hint-value": "左键：打开面板 · 右键：切换电池养护"
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "notify": {
+    "title": "OMEN Control",
+    "write-failed": "Command failed: {cmd}",
+    "write-spawn-failed": "Could not start the write command.",
+    "no-pkexec": "pkexec is not installed; write actions will fail."
+  },
+  "settings": {
+    "omen_bin": {
+      "label": "omen binary",
+      "description": "Path to the omen CLI. Use an absolute path for pkexec writes (e.g. /run/current-system/sw/bin/omen)."
+    },
+    "write_cmd": {
+      "label": "Privilege escalation",
+      "description": "How root write commands are executed.",
+      "options": {
+        "pkexec": "pkexec (Polkit prompt)",
+        "sudo": "sudo"
+      }
+    },
+    "poll_interval": {
+      "label": "Poll interval",
+      "description": "How often to re-read sensors/fan/thermal/battery (ms)."
+    },
+    "show_label": {
+      "label": "Show label"
+    },
+    "show_temps": {
+      "label": "Show temperatures"
+    }
+  },
+  "panel": {
+    "title": "OMEN Control",
+    "subtitle": "HP OMEN BIOS/EC",
+    "omend": "omend",
+    "omend-active": "active",
+    "omend-down": "not running",
+    "fan": "Fan",
+    "temps": "Temps",
+    "thermal": "Thermal",
+    "power-profile": "Power profile",
+    "battery": "Battery care",
+    "yes": "yes",
+    "no": "no",
+    "on": "on",
+    "off": "off",
+    "power": {
+      "balanced": "Balanced",
+      "performance": "Performance"
+    },
+    "mode": {
+      "performance": "Performance",
+      "balanced": "Balanced",
+      "cool": "Cool",
+      "quiet": "Quiet",
+      "extreme": "Extreme"
+    },
+    "power-set": "Power profile",
+    "thermal-set": "Thermal mode",
+    "fan-set": "Fan speed",
+    "fan-apply": "Apply",
+    "fan-auto": "Auto",
+    "battery-toggle": "Toggle battery care"
+  },
+  "widget": {
+    "unavailable": "omen unavailable",
+    "omend": "omend",
+    "omend-active": "active",
+    "omend-down": "not running",
+    "fan": "Fan",
+    "ambient": "Ambient",
+    "thermal": "Thermal",
+    "power": "Power profile",
+    "yes": "yes",
+    "no": "no",
+    "battery": "Battery care",
+    "on": "on",
+    "off": "off",
+    "hint": "Hint",
+    "hint-value": "L: open panel · R: toggle battery care"
+  }
+}

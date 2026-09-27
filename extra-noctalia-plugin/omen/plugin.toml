@@ -1,0 +1,74 @@
+id          = "jackockzuo/omen"
+name        = "OMEN Control"
+version     = "0.1.0"
+plugin_api  = 24
+author      = "jackockzuo"
+license     = "MIT"
+icon        = "car-fan"
+tags        = ["hardware", "system", "bar"]
+dependencies = ["omen", "pkexec"]
+description = "HP OMEN BIOS/EC 监控与控制的 Noctalia 小组件：风扇转速、WMAA 温度、热/性能模式、电池养护与 omend 状态。"
+
+# ---------------------------------------------------------------------------
+# 插件级设置：由 service 使用（轮询与写命令提权）。
+# ---------------------------------------------------------------------------
+
+[[setting]]
+key = "omen_bin"
+type = "string"
+label_key = "settings.omen_bin.label"
+description_key = "settings.omen_bin.description"
+default = "omen"
+
+[[setting]]
+key = "write_cmd"
+type = "select"
+label_key = "settings.write_cmd.label"
+description_key = "settings.write_cmd.description"
+default = "pkexec"
+options = [
+  { value = "pkexec", label_key = "settings.write_cmd.options.pkexec" },
+  { value = "sudo",   label_key = "settings.write_cmd.options.sudo" },
+]
+
+[[setting]]
+key = "poll_interval"
+type = "int"
+label_key = "settings.poll_interval.label"
+description_key = "settings.poll_interval.description"
+default = 2000
+min = 1000
+max = 60000
+advanced = true
+
+# ---------------------------------------------------------------------------
+# 条目：headless service + 条形栏小组件。
+# ---------------------------------------------------------------------------
+
+[[service]]
+id    = "omen-service"
+entry = "service.luau"
+
+[[widget]]
+id    = "omen"
+entry = "widget.luau"
+
+  [[widget.setting]]
+  key = "show_label"
+  type = "bool"
+  label_key = "settings.show_label.label"
+  default = true
+
+  [[widget.setting]]
+  key = "show_temps"
+  type = "bool"
+  label_key = "settings.show_temps.label"
+  default = true
+
+[[panel]]
+id              = "panel"
+entry           = "panel.luau"
+width           = 380
+height          = 540
+placement       = "attached"
+open_near_click = true
