@@ -98,6 +98,20 @@
                 示例: [ { temp=50; speed=30; } { temp=65; speed=50; } { temp=80; speed=80; } { temp=90; speed=100; } ]
               '';
             };
+
+            allowPasswordless = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = ''
+                允许 wheel 组成员通过 pkexec 免密运行 omen。
+
+                GUI 小组件（如 Noctalia 插件）的写操作经 pkexec 调 omen；
+                Noctalia 的 runAsync 没有控制终端，若缺少交互式 Polkit agent，
+                pkexec 会以“No such device or address”失败。开启此选项会安装一条
+                Polkit 规则，让 wheel 成员免密授权，无需 agent。
+                关闭则 GUI 写操作需要自行提供 Polkit agent。
+              '';
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -108,6 +122,25 @@
             };
 
             environment.systemPackages = [ omen-pkg ];
+
+            # 让 wheel 成员免密通过 pkexec 运行 omen（供 GUI 小组件写 EC 用）。
+            # 只匹配 omen 的 store 路径与系统 profile 软链，避免误放权其它程序。
+            security.polkit.extraConfig = lib.mkIf cfg.allowPasswordless ''
+              polkit.addRule(function(action, subject) {
+                if (action.id != "org.freedesktop.policykit.exec") {
+                  return polkit.Result.NOT_HANDLED;
+                }
+                if (!subject.isInGroup("wheel")) {
+                  return polkit.Result.NOT_HANDLED;
+                }
+                var program = action.lookup("program") || "";
+                if (program === "${omen-pkg}/bin/omen" ||
+                    program === "/run/current-system/sw/bin/omen") {
+                  return polkit.Result.YES;
+                }
+                return polkit.Result.NOT_HANDLED;
+              });
+            '';
 
             systemd.services.omen-unlock = {
               description = "Apply OMEN EC settings on boot";

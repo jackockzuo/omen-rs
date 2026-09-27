@@ -22,7 +22,25 @@
 
 - `omen` CLI（本仓库构建产物）在 PATH 上，或通过设置 `omen_bin` 指定绝对路径。
 - **非 root 读取**：需 `omend` 运行（socket `/tmp/omend.sock`），否则读命令回退直连硬件需要 root。
-- **写操作**：`pkexec`（默认，Polkit 图形授权）或 `sudo`。
+- **写操作**：`pkexec`（默认）或 `sudo`。
+
+### ⚠ 写操作需要免密授权
+
+Noctalia 的 `noctalia.runAsync` 没有控制终端，若系统里没有**交互式 Polkit agent**
+（只跑 polkitd 不够），`pkexec` 会以如下错误失败：
+
+```
+Error creating textual authentication agent: Error opening current controlling
+terminal for the process (`/dev/tty'): No such device or address
+```
+
+本仓库的 NixOS module（`services.omen`）默认安装一条 Polkit 规则
+（`allowPasswordless = true`），让 `wheel` 组成员免密通过 pkexec 运行 `omen`，
+无需 agent、无需弹窗。若不用该 module，可任选其一：
+
+1. 手动加同样的 Polkit 规则（见 `flake.nix` 的 `security.polkit.extraConfig`）；
+2. 在会话里启动一个 Polkit agent（如 `hyprpolkitagent` / `lxqt-policykit` / `polkit-gnome`）；
+3. 把插件设置里的 `write_cmd` 改成 `sudo`，并在 sudoers 里为 `omen` 配 NOPASSWD。
 
 ## 安装
 
