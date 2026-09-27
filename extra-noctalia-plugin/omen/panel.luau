@@ -15,6 +15,7 @@ local status = {
     omend = false,
     sensors = {},
     fanRpm = {},
+    fanMode = "curve",
     power = {},
     thermal = "unknown",
     battery = nil,
@@ -177,11 +178,16 @@ local function renderPanel()
     }))
     table.insert(children, ui.separator({ thickness = 1, color = "outline/0.3", spacing = 8 }))
 
-    -- 风扇滑杆（0-100% = omen fan set 的百分比参数）+ 应用/恢复自动
+    -- 风扇：温度曲线（默认）/ 手动。曲线由 omend 执行，不用 BIOS 自动。
+    local fanMode = status.fanMode or "curve"
     table.insert(children, ui.column({ gap = 6 }, {
         ui.row({ align = "center", justify = "space_between" }, {
             sectionTitle(noctalia.tr("panel.fan-set")),
-            ui.label({ text = tostring(fanSlider or 0) .. "%", fontSize = 14, fontWeight = "bold", color = "primary" }),
+            ui.label({
+                text = noctalia.tr(fanMode == "manual" and "panel.fan-mode.manual" or "panel.fan-mode.curve"),
+                fontSize = 12,
+                color = fanMode == "manual" and "primary" or "secondary",
+            }),
         }),
         ui.row({ align = "center", gap = 8 }, {
             ui.label({ text = "0%", fontSize = 11, color = "on_surface_variant" }),
@@ -196,8 +202,18 @@ local function renderPanel()
             ui.label({ text = "100%", fontSize = 11, color = "on_surface_variant" }),
         }),
         ui.row({ gap = 8 }, {
-            ui.button({ text = noctalia.tr("panel.fan-apply"), variant = "primary", flexGrow = 1, onClick = "onFanApply" }),
-            ui.button({ text = noctalia.tr("panel.fan-auto"), variant = "ghost", flexGrow = 1, onClick = "onFanAuto" }),
+            ui.button({
+                text = noctalia.tr("panel.fan-curve"),
+                variant = fanMode == "curve" and "primary" or "outline",
+                flexGrow = 1,
+                onClick = "onFanCurve",
+            }),
+            ui.button({
+                text = noctalia.tr("panel.fan-apply"),
+                variant = "primary",
+                flexGrow = 1,
+                onClick = "onFanApply",
+            }),
         }),
     }))
     table.insert(children, ui.separator({ thickness = 1, color = "outline/0.3", spacing = 8 }))
@@ -235,8 +251,8 @@ function onFanApply()
     noctalia.state.set("command", { action = "fan-set", speed = fanSlider or 0 })
 end
 
-function onFanAuto()
-    noctalia.state.set("command", { action = "fan-auto" })
+function onFanCurve()
+    noctalia.state.set("command", "fan-curve")
 end
 
 function onBatteryToggle()

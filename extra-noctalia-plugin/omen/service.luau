@@ -17,6 +17,9 @@
 --     whatever the hardware reports (latest values only).
 
 local SOCKET_PATH = "/tmp/omend.sock"
+-- omend 的风扇模式控制文件（omend 创建，0666）：`curve` 或 `manual:<0-100>`。
+-- 风扇由 omend 统一执行，插件只切换模式，绝不直接写 BIOS 自动。
+local FAN_MODE_PATH = "/run/omend-fan-mode"
 local DEFAULT_OMEN = "omen"
 
 local omenBin = DEFAULT_OMEN
@@ -29,6 +32,9 @@ local lastKey: string? = nil
 -- Latest observed values, used only to compute the next cycle/toggle target.
 local currentThermal = "unknown"
 local lastBattery: boolean? = nil
+
+-- 前向声明：writeFanMode 等辅助函数会调用 refresh。
+local refresh
 
 local function config(key, fallback)
     local value = noctalia.getConfig(key)
@@ -54,6 +60,29 @@ end
 
 local function isOmendActive(): boolean
     return noctalia.fileExists(SOCKET_PATH) == true
+end
+
+-- 读取当前风扇模式：返回 ("curve"|"manual", speed?)。
+local function readFanMode()
+    local content = noctalia.readFile(FAN_MODE_PATH)
+    if type(content) ~= "string" then
+        return "curve", nil
+    end
+    local n = content:match("manual:%s*(%d+)")
+    if n then
+        return "manual", tonumber(n)
+    end
+    return "curve", nil
+end
+
+-- 写风扇模式。omend 每轮读取并按此执行。
+local function writeFanMode(content)
+    local ok, err = noctalia.writeFile(FAN_MODE_PATH, content .. "\n")
+    if not ok then
+        logX("write fan-mode failed: " .. tostring(err))
+        noctalia.notifyError(noctalia.tr("notify.title"), noctalia.tr("notify.fan-mode-failed"))
+    end
+    refresh()
 end
 
 -- ---------------------------------------------------------------------------
@@ -156,6 +185,8 @@ local function statusKey(status)
         tostring(status.omend),
         tostring(s.ir), tostring(s.ambient), tostring(s.pch), tostring(s.vr),
         table.concat(rpm, ","),
+        tostring(status.fanMode),
+        tostring(status.fanSpeed),
         tostring(p.profile),
         tostring(p.consistent),
         tostring(p.platform_profile),
@@ -170,6 +201,8 @@ local function publish(partial)
         omend = isOmendActive(),
         sensors = {},
         fanRpm = {},
+        fanMode = "curve",
+        fanSpeed = nil,
         power = {},
         thermal = "unknown",
         battery = nil,
@@ -230,6 +263,10 @@ local function publish(partial)
         end
     end
 
+    local fm, fs = readFanMode()
+    status.fanMode = fm
+    status.fanSpeed = fs
+
     currentThermal = status.thermal
     lastBattery = status.battery
 
@@ -240,7 +277,7 @@ local function publish(partial)
     end
 end
 
-local function refresh()
+function refresh()
     if pending then return end
     pending = true
 
@@ -319,10 +356,10 @@ local function handleCommand(command)
         end
     elseif action == "fan-set" then
         if type(speed) == "number" and speed >= 0 and speed <= 100 then
-            runWrite("fan set " .. math.floor(speed))
+            writeFanMode("manual:" .. math.floor(speed))
         end
-    elseif action == "fan-auto" then
-        runWrite("fan auto")
+    elseif action == "fan-curve" then
+        writeFanMode("curve")
     elseif action == "battery-toggle" then
         runWrite("battery " .. (lastBattery ~= true and "on" or "off"))
     elseif action == "power-set" then

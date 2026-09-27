@@ -3,7 +3,8 @@
     "title": "OMEN Control",
     "write-failed": "Command failed: {cmd}",
     "write-spawn-failed": "Could not start the write command.",
-    "no-pkexec": "pkexec is not installed; write actions will fail."
+    "no-pkexec": "pkexec is not installed; write actions will fail.",
+    "fan-mode-failed": "Could not switch fan mode."
   },
   "settings": {
     "omen_bin": {
@@ -57,9 +58,13 @@
     },
     "power-set": "Power profile",
     "thermal-set": "Thermal mode",
-    "fan-set": "Fan speed",
+    "fan-set": "Fan",
+    "fan-curve": "Curve",
     "fan-apply": "Apply",
-    "fan-auto": "Auto",
+    "fan-mode": {
+      "curve": "Temperature curve",
+      "manual": "Manual"
+    },
     "battery-toggle": "Toggle battery care"
   },
   "widget": {

@@ -3,7 +3,8 @@
     "title": "OMEN 控制",
     "write-failed": "命令执行失败：{cmd}",
     "write-spawn-failed": "无法启动写命令。",
-    "no-pkexec": "未安装 pkexec，写操作将失败。"
+    "no-pkexec": "未安装 pkexec，写操作将失败。",
+    "fan-mode-failed": "切换风扇模式失败。"
   },
   "settings": {
     "omen_bin": {
@@ -57,9 +58,13 @@
     },
     "power-set": "功耗配置",
     "thermal-set": "热模式",
-    "fan-set": "风扇转速",
+    "fan-set": "风扇",
+    "fan-curve": "曲线",
     "fan-apply": "应用",
-    "fan-auto": "恢复自动",
+    "fan-mode": {
+      "curve": "温度曲线",
+      "manual": "手动"
+    },
     "battery-toggle": "切换电池养护"
   },
   "widget": {

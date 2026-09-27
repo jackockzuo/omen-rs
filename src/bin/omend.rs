@@ -55,6 +55,44 @@ fn perf_mode() -> &'static str {
     }
 }
 
+/// 风扇控制模式：omend 是风扇的唯一控制者，GUI/CLI 只通过这个控制文件切换。
+///
+/// 文件内容：
+///   - `curve`       → 温度曲线（默认）
+///   - `manual:<0-100>` → 固定转速，每轮重发以对抗固件回退
+///
+/// 默认 `curve`；文件不存在/内容非法也按 `curve`。文件模式 0666，
+/// 允许用户会话里的 GUI 写入（内容会被解析校验，无法注入）。
+const FAN_MODE_PATH: &str = "/run/omend-fan-mode";
+
+enum FanMode {
+    Curve,
+    Manual(u8),
+}
+
+fn init_fan_mode() {
+    if Path::new(FAN_MODE_PATH).exists() {
+        return;
+    }
+    if std::fs::write(FAN_MODE_PATH, "curve\n").is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(FAN_MODE_PATH, std::fs::Permissions::from_mode(0o666));
+        }
+    }
+}
+
+fn read_fan_mode() -> FanMode {
+    let raw = std::fs::read_to_string(FAN_MODE_PATH).unwrap_or_default();
+    if let Some(rest) = raw.trim().strip_prefix("manual:") {
+        if let Ok(n) = rest.trim().parse::<u8>() {
+            return FanMode::Manual(n.min(100));
+        }
+    }
+    FanMode::Curve
+}
+
 fn apply_perf() {
     let mode = perf_mode();
     let profile = match mode {
@@ -77,6 +115,7 @@ fn apply_perf() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging();
+    init_fan_mode();
 
     let interval = hold_interval();
     let mode = perf_mode();
@@ -114,21 +153,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::task::spawn_blocking(move || {
                 transport::read(CMD_PERF, CommandType::FanCount, 4).ok();
                 apply_perf();
-                if let Some(c) = &curve {
-                    match commands::sensors::cpu_temp() {
-                        Some(temp) => {
-                            let target = c.evaluate(temp);
-                            let prev = lf.swap(target, Ordering::SeqCst);
-                            // 无论档位是否变化都重发：固件看门狗约 120s 后回退手动风扇
-                            match commands::fan::set(target, target) {
-                                Ok(()) if prev != target => {
-                                    info!(temp, speed = target, "风扇曲线已更新");
+
+                match read_fan_mode() {
+                    // GUI/CLI 指定的固定转速：每轮重发以对抗固件回退。
+                    FanMode::Manual(speed) => {
+                        let prev = lf.swap(speed, Ordering::SeqCst);
+                        match commands::fan::set(speed, speed) {
+                            Ok(()) if prev != speed => info!(speed, "手动风扇已更新"),
+                            Ok(()) => debug!(speed, "手动风扇保持"),
+                            Err(e) => error!(error = %e, "手动风扇设置失败"),
+                        }
+                    }
+                    // 温度曲线（默认）：按 CPU 结温插值。
+                    FanMode::Curve => {
+                        if let Some(c) = &curve {
+                            match commands::sensors::cpu_temp() {
+                                Some(temp) => {
+                                    let target = c.evaluate(temp);
+                                    let prev = lf.swap(target, Ordering::SeqCst);
+                                    // 无论档位是否变化都重发：固件看门狗约 120s 后回退手动风扇
+                                    match commands::fan::set(target, target) {
+                                        Ok(()) if prev != target => {
+                                            info!(temp, speed = target, "风扇曲线已更新");
+                                        }
+                                        Ok(()) => debug!(temp, speed = target, "风扇曲线保持"),
+                                        Err(e) => error!(error = %e, "风扇曲线设置失败"),
+                                    }
                                 }
-                                Ok(()) => debug!(temp, speed = target, "风扇曲线保持"),
-                                Err(e) => error!(error = %e, "风扇曲线设置失败"),
+                                None => {
+                                    warn!("CPU 温度不可用（coretemp/k10temp），本轮跳过风扇调整")
+                                }
                             }
                         }
-                        None => warn!("CPU 温度不可用（coretemp/k10temp），本轮跳过风扇调整"),
                     }
                 }
             })
