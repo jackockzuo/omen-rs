@@ -244,8 +244,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let r1 = Arc::clone(&running);
     let lf = Arc::clone(&last_fan_speed);
     let lm = Arc::clone(&last_fan_mode);
+    let watchdog_fan_curve = fan_curve.clone();
     tokio::spawn(async move {
-        let curve = fan_curve.clone();
+        let curve = watchdog_fan_curve;
         let mut last_hold: Option<tokio::time::Instant> = None;
         let mut last_fan_write: Option<tokio::time::Instant> = None;
         loop {
