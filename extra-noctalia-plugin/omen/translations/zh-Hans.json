@@ -21,7 +21,7 @@
     },
     "poll_interval": {
       "label": "轮询间隔",
-      "description": "重新读取传感器/风扇/热模式/电池的间隔（毫秒）。"
+      "description": "重新读取硬件状态的间隔（毫秒）。"
     },
     "show_label": {
       "label": "显示文字"
@@ -37,8 +37,11 @@
     "omend-active": "运行中",
     "omend-down": "未运行",
     "fan": "风扇",
+    "cpu-temp": "CPU 温度",
     "temps": "温度",
-    "thermal": "热模式",
+    "thermal": "热模式（推断）",
+    "requested": "最近请求",
+    "read-errors": "读取错误",
     "power-profile": "功耗配置",
     "battery": "电池养护",
     "yes": "是",
@@ -58,14 +61,21 @@
     },
     "power-set": "功耗配置",
     "thermal-set": "热模式",
+    "thermal-observed": "可观测状态（策略不可读）",
+    "thermal-requested": "最近请求",
     "fan-set": "风扇",
     "fan-curve": "曲线",
+    "fan-auto": "BIOS 自动",
     "fan-apply": "应用",
+    "fan-no-curve": "未配置风扇曲线，请在 NixOS services.omen.fanCurve 中设置",
     "fan-mode": {
       "curve": "温度曲线",
-      "manual": "手动"
+      "manual": "手动",
+      "auto": "BIOS 自动"
     },
-    "battery-toggle": "切换电池养护"
+    "battery-toggle": "电池养护",
+    "read-errors": "读取错误",
+    "updated": "更新时间"
   },
   "widget": {
     "unavailable": "omen 不可用",

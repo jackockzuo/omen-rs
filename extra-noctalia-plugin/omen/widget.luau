@@ -33,7 +33,7 @@ local function fanText()
 end
 
 local function thermalInfo()
-    local m = status.thermal or "unknown"
+    local m = status.requestedThermal or status.thermal or "unknown"
     if m == "performance" then return "PERF", "primary" end
     if m == "balanced" then return "BAL", "secondary" end
     if m == "cool" then return "COOL", "tertiary" end
@@ -84,8 +84,13 @@ local function tooltipRows()
 
     rows[#rows + 1] = {
         key = noctalia.tr("widget.thermal"),
-        value = status.thermal or "unknown",
+        value = status.requestedThermal and (status.requestedThermal .. " (" .. noctalia.tr("widget.requested") .. ")")
+            or (status.thermalObserved or status.thermal or "unknown"),
     }
+
+    if type(status.errors) == "table" and #status.errors > 0 then
+        rows[#rows + 1] = { key = noctalia.tr("widget.read-errors"), value = table.concat(status.errors, " · ") }
+    end
 
     local p = status.power or {}
     if type(p.profile) == "string" then

@@ -13,9 +13,9 @@
 - 控制面板：查看 omend/风扇/温度/功耗配置/热模式/电池信息，调整
   **功耗配置**（均衡 / 性能解锁）、**热策略**（性能/均衡/清凉/安静/极限）、
   **风扇**（曲线 / 手动滑杆）、切换电池养护。
-- **风扇模式不用 BIOS 自动**：风扇由 omend 统一控制，插件只写
-  `/run/omend-fan-mode`（`curve`=温度曲线 / `manual:<0-100>`=固定转速），
-  omend 每轮据此执行，因此手动转速不会被固件回退，切回曲线也即刻生效。
+- **风扇模式**：风扇由 omend 统一管理。配置了 `OMEN_FAN_CURVE` 时默认曲线，
+  未配置时默认 BIOS 自动；插件可切换 BIOS 自动、温度曲线和固定转速。
+  手动/曲线档位会定期重发以防固件回退。
 - **功耗配置**（`omen power profile`）：EC 0xBA 功耗倍率 + EC 0x95 性能模式 +
   platform_profile 三路协同（默认 55W ↔ 解锁 ~130W）；面板显示三路是否一致，
   不一致时标 ⚠。它与「热策略」(WMAA 0x1A) 是两个正交的轴。
@@ -24,7 +24,7 @@
 ## 依赖
 
 - `omen` CLI（本仓库构建产物）在 PATH 上，或通过设置 `omen_bin` 指定绝对路径。
-- **非 root 读取**：需 `omend` 运行（socket `/tmp/omend.sock`），否则读命令回退直连硬件需要 root。
+- **非 root 读取**：需 `omend` 运行（socket `/tmp/omend.sock`），否则读命令回退直连硬件需要 root。插件通过 `omen status --json` 单次获取硬件快照。
 - **写操作**：`pkexec`（默认）或 `sudo`。
 
 ### ⚠ 写操作需要免密授权
@@ -96,11 +96,11 @@ extra-noctalia-plugin/          # 插件源目录（path 源指向这里）
 
 ## 与 omen-rs 的配合
 
-本插件依赖 omen-rs 的三个只读命令（已在 `src/commands` 中实现）：
+本插件通过 `omen status --json` 向 omend 获取单次聚合快照。返回对象包含：
 
-- `omen power profile --json` → `{ "profile", "consistent", "ec_0xba", "ec_0x95", "platform_profile", "inconsistencies" }`
-- `omen battery status --json` → `{ "care": bool }`
-- `omen thermal status --json` → `{ "platform_profile", "ec_0x95", "ec_0xba", "unlocked", "mode" }`
+- `sensors`、`fan`、`power`、`thermal`、`battery`：各子命令原有 JSON 结构
+- `fanMode`、`fanSpeed`、`fanCurveConfigured`、`fanCurve`：风扇期望模式与配置
+- `cpuTemp`、`errors`、`updatedAtMs`：CPU 温度、读取错误和快照时间
 
 写操作：`omen power profile set <balanced|performance>`、`omen thermal <mode>`、
 `omen fan set <pct>` / `omen fan auto`、`omen battery on|off`。

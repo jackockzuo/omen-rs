@@ -1,14 +1,13 @@
 --!nonstrict
 -- HP OMEN BIOS/EC control — headless service.
 --
--- Owns every `omen` shell call and runs for the whole session. It polls the
--- read-only commands (`sensors` / `fan` / `perf` / `thermal` / `battery`),
--- normalizes the JSON into one `status` table and publishes it on the plugin
--- state channel. The bar widget is a thin presentation client that reads that
--- channel and drives this service by writing to the `command` channel.
+-- Owns every `omen` shell call and polls one aggregated omend status snapshot,
+-- normalizes it and publishes it on the plugin state channel.
+-- The bar widget is a thin presentation client that reads that channel and
+-- drives this service by writing to the `command` channel.
 --
 -- Design notes:
---   * Reads run through `omen <cmd> --json`; when the user is not root the CLI
+--   * Reads run through `omen status --json`; when the user is not root the CLI
 --     transparently routes them through the omend socket (/tmp/omend.sock), so
 --     no sudo is needed as long as omend is running.
 --   * Writes touch EC/ACPI and therefore need root: they run as
@@ -17,8 +16,8 @@
 --     whatever the hardware reports (latest values only).
 
 local SOCKET_PATH = "/tmp/omend.sock"
--- omend 的风扇模式控制文件（omend 创建，0666）：`curve` 或 `manual:<0-100>`。
--- 风扇由 omend 统一执行，插件只切换模式，绝不直接写 BIOS 自动。
+-- omend 的风扇模式控制文件：`auto`、`curve` 或 `manual:<0-100>`。
+-- 风扇由 omend 统一执行，插件只切换模式。
 local FAN_MODE_PATH = "/run/omend-fan-mode"
 local DEFAULT_OMEN = "omen"
 
@@ -28,6 +27,7 @@ local writeCmd = "pkexec"
 
 local pending = false
 local lastKey: string? = nil
+local requestedThermal: string? = nil
 
 -- Latest observed values, used only to compute the next cycle/toggle target.
 local currentThermal = "unknown"
@@ -62,19 +62,6 @@ local function isOmendActive(): boolean
     return noctalia.fileExists(SOCKET_PATH) == true
 end
 
--- 读取当前风扇模式：返回 ("curve"|"manual", speed?)。
-local function readFanMode()
-    local content = noctalia.readFile(FAN_MODE_PATH)
-    if type(content) ~= "string" then
-        return "curve", nil
-    end
-    local n = content:match("manual:%s*(%d+)")
-    if n then
-        return "manual", tonumber(n)
-    end
-    return "curve", nil
-end
-
 -- 写风扇模式。omend 每轮读取并按此执行。
 local function writeFanMode(content)
     local ok, err = noctalia.writeFile(FAN_MODE_PATH, content .. "\n")
@@ -102,79 +89,9 @@ local function decodeJson(stdout: string)
     return decoded
 end
 
-local function parseSensors(stdout)
-    local j = decodeJson(stdout)
-    if not j then return nil end
-    return {
-        ir = j.ir,
-        ambient = j.ambient,
-        pch = j.pch,
-        vr = j.vr,
-    }
-end
-
--- `omen fan --json` -> { fans = [ { level = N }, … ] }; N ∈ 0..64 maps to
--- 0..6400 RPM (each step is 100 RPM).
-local function parseFan(stdout)
-    local j = decodeJson(stdout)
-    if not j or type(j.fans) ~= "table" then return nil end
-    local rpm = {}
-    for _, f in ipairs(j.fans) do
-        if type(f) == "table" and type(f.level) == "number" then
-            table.insert(rpm, f.level * 100)
-        end
-    end
-    return rpm
-end
-
--- `omen power profile --json` ->
--- { profile = "performance"|"balanced"|"inconsistent"|"unknown", consistent, … }.
-local function parsePower(stdout)
-    local j = decodeJson(stdout)
-    if not j then return nil end
-    local inconsistencies = {}
-    if type(j.inconsistencies) == "table" then
-        for _, item in ipairs(j.inconsistencies) do
-            table.insert(inconsistencies, tostring(item))
-        end
-    end
-    return {
-        profile = j.profile or "unknown",
-        consistent = j.consistent == true,
-        ec_0xba = j.ec_0xba,
-        ec_0x95 = j.ec_0x95,
-        platform_profile = j.platform_profile,
-        inconsistencies = inconsistencies,
-    }
-end
-
--- `omen thermal --json` -> { mode = "performance"|"balanced"|"unknown", … }.
--- Note: the 0x1A strategy register is write-only, so this is derived from
--- platform_profile / EC 0x95 (see omen-rs src/commands/thermal.rs).
-local function parseThermal(stdout)
-    local j = decodeJson(stdout)
-    if not j then return nil end
-    return j.mode or "unknown"
-end
-
--- `omen battery --json` -> { care = bool }.
-local function parseBattery(stdout)
-    local j = decodeJson(stdout)
-    if not j then return nil end
-    return j.care == true
-end
-
 -- ---------------------------------------------------------------------------
 -- Polling + publish
 -- ---------------------------------------------------------------------------
-
-local READ_QUEUE = {
-    { key = "sensors", cmd = "sensors --json" },
-    { key = "fan",     cmd = "fan --json" },
-    { key = "power",   cmd = "power profile --json" },
-    { key = "thermal", cmd = "thermal status --json" },
-    { key = "battery", cmd = "battery status --json" },
-}
 
 local function statusKey(status)
     local s = status.sensors or {}
@@ -192,80 +109,56 @@ local function statusKey(status)
         tostring(p.platform_profile),
         tostring(status.thermal),
         tostring(status.battery),
+        tostring(status.updatedAtMs),
+        tostring(status.requestedThermal),
+        table.concat(status.errors or {}, ","),
     }, "|")
 end
 
-local function publish(partial)
+local function publish(result)
+    local raw = type(result) == "table" and result.exitCode == 0 and decodeJson(result.stdout) or nil
     local status = {
-        available = false,
+        available = raw ~= nil and raw.available == true,
         omend = isOmendActive(),
-        sensors = {},
+        sensors = raw and raw.sensors or {},
+        cpuTemp = raw and raw.cpuTemp or nil,
         fanRpm = {},
-        fanMode = "curve",
-        fanSpeed = nil,
-        power = {},
+        fanMode = raw and raw.fanMode or "auto",
+        fanSpeed = raw and raw.fanSpeed or nil,
+        fanCurveConfigured = raw and raw.fanCurveConfigured == true or false,
+        fanCurve = raw and raw.fanCurve or {},
+        power = raw and raw.power or {},
         thermal = "unknown",
+        thermalObserved = "unknown",
         battery = nil,
+        errors = raw and raw.errors or { "omend status unavailable" },
+        updatedAtMs = raw and raw.updatedAtMs or nil,
+        requestedThermal = requestedThermal,
     }
 
-    local function ok(result)
-        return type(result) == "table" and result.exitCode == 0
-    end
-
-    local sr = partial.sensors
-    if ok(sr) then
-        local s = parseSensors(sr.stdout)
-        if s then
-            status.sensors = s
-            status.available = true
+    local fan = raw and raw.fan
+    if type(fan) == "table" and type(fan.fans) == "table" then
+        for _, f in ipairs(fan.fans) do
+            if type(f) == "table" and type(f.level) == "number" then
+                table.insert(status.fanRpm, f.level * 100)
+            end
         end
     end
 
-    local fr = partial.fan
-    if ok(fr) then
-        local rpm = parseFan(fr.stdout)
-        if rpm then
-            status.fanRpm = rpm
-            status.available = true
-        end
+    local t = raw and raw.thermal
+    if type(t) == "table" and type(t.mode) == "string" then
+        status.thermalObserved = t.mode
+        status.thermal = t.mode
     end
-
-    local pr = partial.power
-    if ok(pr) then
-        local p = parsePower(pr.stdout)
-        if p then
-            status.power = p
-            status.available = true
-        end
+    local p = status.power
+    if status.thermal == "unknown" and type(p.profile) == "string"
+        and (p.profile == "performance" or p.profile == "balanced") then
+        status.thermal = p.profile
     end
-
-    local tr = partial.thermal
-    if ok(tr) then
-        local t = parseThermal(tr.stdout)
-        if t then
-            status.thermal = t
-        end
+    local b = raw and raw.battery
+    if type(b) == "table" and type(b.care) == "boolean" then
+        status.battery = b.care
     end
-
-    -- 回退：旧版 omend 没有 `thermal status`，此时从 power.profile 推导。
-    if status.thermal == "unknown" and type(status.power.profile) == "string" then
-        local pp = status.power.profile
-        if pp == "performance" or pp == "balanced" then
-            status.thermal = pp
-        end
-    end
-
-    local br = partial.battery
-    if ok(br) then
-        local b = parseBattery(br.stdout)
-        if b ~= nil then
-            status.battery = b
-        end
-    end
-
-    local fm, fs = readFanMode()
-    status.fanMode = fm
-    status.fanSpeed = fs
 
     currentThermal = status.thermal
     lastBattery = status.battery
@@ -281,28 +174,15 @@ function refresh()
     if pending then return end
     pending = true
 
-    local partial = {}
+    local started = noctalia.runAsync(omenCmd("status --json"), function(result)
+        pending = false
+        publish(result)
+    end)
 
-    local function step(i)
-        local item = READ_QUEUE[i]
-        if not item then
-            pending = false
-            publish(partial)
-            return
-        end
-
-        local started = noctalia.runAsync(omenCmd(item.cmd), function(result)
-            partial[item.key] = result
-            step(i + 1)
-        end)
-
-        if not started then
-            partial[item.key] = { exitCode = -1, stdout = "" }
-            step(i + 1)
-        end
+    if not started then
+        pending = false
+        publish({ exitCode = -1, stdout = "" })
     end
-
-    step(1)
 end
 
 -- ---------------------------------------------------------------------------
@@ -349,9 +229,11 @@ local function handleCommand(command)
     end
 
     if action == "cycle-thermal" then
-        runWrite("thermal " .. nextThermal(currentThermal))
+        requestedThermal = nextThermal(requestedThermal or currentThermal)
+        runWrite("thermal " .. requestedThermal)
     elseif action == "thermal-set" then
-        if type(mode) == "string" then
+        if type(mode) == "string" and ({ performance = true, balanced = true, cool = true, quiet = true, extreme = true })[mode] then
+            requestedThermal = mode
             runWrite("thermal " .. mode)
         end
     elseif action == "fan-set" then
@@ -360,8 +242,12 @@ local function handleCommand(command)
         end
     elseif action == "fan-curve" then
         writeFanMode("curve")
+    elseif action == "fan-auto" then
+        writeFanMode("auto")
     elseif action == "battery-toggle" then
         runWrite("battery " .. (lastBattery ~= true and "on" or "off"))
+    elseif action == "battery-set" then
+        runWrite("battery " .. (command.enabled == true and "on" or "off"))
     elseif action == "power-set" then
         if mode == "balanced" or mode == "performance" then
             runWrite("power profile set " .. mode)

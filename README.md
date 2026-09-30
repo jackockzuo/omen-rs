@@ -12,7 +12,7 @@ HP OMEN 笔记本 BIOS/EC 控制的 Rust 封装 —— CLI + 守护进程。
 | `omen sensors` | CPU / PCH / VR / Ambient 温度 | WMAA 0x23 |
 | `omen fan` | 读风扇档位 | WMAA 0x2D |
 | `omen fan set <F1> [F2]` | 手动设风扇转速（0-100%） | WMAA 0x2E |
-| `omen fan auto` | 恢复 BIOS 自动控制（GUI 不使用，改用温度曲线） | 0x27+0x1A+0x2E 三步法 |
+| `omen fan auto` | 恢复 BIOS 自动控制 | 0x27+0x1A+0x2E 三步法 |
 | `omen fan curve <曲线>` | 预览温度曲线插值 | — |
 | `omen gpu` / `omen gpu set` | GPU 功率读写（cTGP/PPAB/DState/GPS） | WMAA 0x22 |
 | `omen thermal <mode>` | 热策略（performance/balanced/cool/…） | WMAA 0x1A |
@@ -26,6 +26,7 @@ HP OMEN 笔记本 BIOS/EC 控制的 Rust 封装 —— CLI + 守护进程。
 | `omen battery status` | 读取电池养护状态 | WMAA 0x24 |
 | `omen unlock` / `omen balanced` | 功耗配置别名（等价 `power profile set`） | EC 0xBA/0x95 + platform_profile |
 | `omen perf [--json]` | 旧版 EC 性能状态（兼容；推荐 `power profile`） | EC RAM 读 |
+| `omen status --json` | 聚合守护进程快照（供插件轮询） | omend |
 | `omen raw <cmd> <type> …` | 原始 WMAA 调用（危险，需 root） | /proc/acpi/call |
 
 守护进程 `omend`：
@@ -34,10 +35,10 @@ HP OMEN 笔记本 BIOS/EC 控制的 Rust 封装 —— CLI + 守护进程。
 - **温度曲线风扇控制**：读 CPU 温度（hwmon coretemp/k10temp）→ 线性插值 → 自动调风扇
   （不用 WMAA 传感器 max：PCH 空闲即 60°C+，会把风扇钉在高转速）
 - **风扇模式**：omend 是风扇的唯一控制者。每轮读 `/run/omend-fan-mode`
-  （`curve` = 温度曲线[默认] / `manual:<0-100>` = 固定转速），GUI/CLI 只切模式，
-  **不使用 BIOS 内置自动**。固定转速也每轮重发，因此不会被固件回退。
+  （已配置 `fanCurve` 时默认 `curve`；未配置时默认 `auto`；也支持
+  `manual:<0-100>` 固定转速），GUI 只切模式。手动与曲线档位会定期重发，防止固件回退。
 - **每轮重发 0x2E**：固件约 120s 后回退手动风扇（见 COMMAND-REFERENCE §13）
-- **Unix socket** `/tmp/omend.sock`：读取类命令（info/sensors/fan/gpu/adapter/perf/battery/thermal/power）在非 root 下自动经 socket 免 sudo 执行；`omen status` / `omen remote <cmd>` 直连 socket
+- **Unix socket** `/tmp/omend.sock`：只读命令在非 root 下自动经 socket 免 sudo 执行；`omen status --json` 返回聚合硬件快照，供 Noctalia 插件单次轮询；`omen remote <cmd>` 直连 socket
 - **日志**：tracing → stderr → journald（`journalctl -u omend`），级别由 `logLevel`（RUST_LOG）控制，默认 info
 
 ## 安装

@@ -21,7 +21,7 @@
     },
     "poll_interval": {
       "label": "Poll interval",
-      "description": "How often to re-read sensors/fan/thermal/battery (ms)."
+      "description": "How often to re-read hardware status (ms)."
     },
     "show_label": {
       "label": "Show label"
@@ -37,8 +37,11 @@
     "omend-active": "active",
     "omend-down": "not running",
     "fan": "Fan",
+    "cpu-temp": "CPU temperature",
     "temps": "Temps",
-    "thermal": "Thermal",
+    "thermal": "Thermal (inferred)",
+    "requested": "requested",
+    "read-errors": "Read errors",
     "power-profile": "Power profile",
     "battery": "Battery care",
     "yes": "yes",
@@ -58,14 +61,21 @@
     },
     "power-set": "Power profile",
     "thermal-set": "Thermal mode",
+    "thermal-observed": "Observable state (strategy is unreadable)",
+    "thermal-requested": "Last requested",
     "fan-set": "Fan",
     "fan-curve": "Curve",
+    "fan-auto": "BIOS auto",
     "fan-apply": "Apply",
+    "fan-no-curve": "No fan curve configured. Set services.omen.fanCurve in NixOS.",
     "fan-mode": {
       "curve": "Temperature curve",
-      "manual": "Manual"
+      "manual": "Manual",
+      "auto": "BIOS auto"
     },
-    "battery-toggle": "Toggle battery care"
+    "battery-toggle": "Battery care",
+    "read-errors": "Read errors",
+    "updated": "Updated"
   },
   "widget": {
     "unavailable": "omen unavailable",

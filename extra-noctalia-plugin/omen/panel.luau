@@ -15,11 +15,13 @@ local status = {
     omend = false,
     sensors = {},
     fanRpm = {},
-    fanMode = "curve",
+    fanMode = "auto",
     power = {},
     thermal = "unknown",
     battery = nil,
 }
+local lastFanMode: string? = nil
+local lastFanSpeed: number? = nil
 
 local THERMAL_MODES = { "performance", "balanced", "cool", "quiet", "extreme" }
 
@@ -38,8 +40,12 @@ local POWER_LABELS = {
     performance = "panel.power.performance",
 }
 
-local function rpmToPercent(rpm)
-    return math.max(0, math.min(100, math.floor((rpm / 6400) * 100 + 0.5)))
+local function thermalSelection()
+    local selected = status.requestedThermal or status.thermalObserved or status.thermal
+    for _, mode in ipairs(THERMAL_MODES) do
+        if mode == selected then return mode end
+    end
+    return nil
 end
 
 local function fanRpmText()
@@ -131,6 +137,7 @@ local function renderPanel()
     table.insert(children, ui.column({ gap = 5 }, {
         infoRow(noctalia.tr("panel.omend"), omendText, omendColor),
         infoRow(noctalia.tr("panel.fan"), fanRpmText() or "--"),
+        infoRow(noctalia.tr("panel.cpu-temp"), temp(status.cpuTemp)),
         infoRow(noctalia.tr("panel.temps"), tempsText()),
         infoRow(noctalia.tr("panel.thermal"), status.thermal or "unknown"),
         infoRow(noctalia.tr("panel.power-profile"), powerText(), powerColor()),
@@ -159,32 +166,49 @@ local function renderPanel()
     table.insert(children, ui.separator({ thickness = 1, color = "outline/0.3", spacing = 8 }))
 
     -- 热模式按钮（短标签 + 完整名 tooltip）
-    local thermalButtons = {}
-    for _, m in ipairs(THERMAL_MODES) do
-        table.insert(thermalButtons, ui.button({
+    local thermalRows = { {}, {} }
+    local selectedThermal = thermalSelection()
+    for i, m in ipairs(THERMAL_MODES) do
+        local button = ui.button({
             text = noctalia.tr(THERMAL_LABELS[m]),
             tooltip = m,
-            variant = status.thermal == m and "primary" or "outline",
+            variant = selectedThermal == m and "primary" or "outline",
             controlSize = "sm",
             flexGrow = 1,
             onClick = function()
                 noctalia.state.set("command", { action = "thermal-set", mode = m })
             end,
-        }))
+        })
+        table.insert(thermalRows[i <= 3 and 1 or 2], button)
     end
     table.insert(children, ui.column({ gap = 6 }, {
         sectionTitle(noctalia.tr("panel.thermal-set")),
-        ui.row({ gap = 4, align = "stretch" }, thermalButtons),
+        ui.row({ gap = 4, align = "stretch" }, thermalRows[1]),
+        ui.row({ gap = 4, align = "stretch" }, thermalRows[2]),
+        ui.label({
+            text = noctalia.tr("panel.thermal-observed") .. ": "
+                .. tostring(status.thermalObserved or status.thermal or "unknown")
+                .. (status.requestedThermal and (" · " .. noctalia.tr("panel.thermal-requested") .. ": " .. status.requestedThermal) or ""),
+            fontSize = 11,
+            color = "on_surface_variant",
+            maxLines = 2,
+        }),
     }))
     table.insert(children, ui.separator({ thickness = 1, color = "outline/0.3", spacing = 8 }))
 
     -- 风扇：温度曲线（默认）/ 手动。曲线由 omend 执行，不用 BIOS 自动。
-    local fanMode = status.fanMode or "curve"
+    local fanMode = status.fanMode or "auto"
+    local fanModeText = fanMode == "manual" and (noctalia.tr("panel.fan-mode.manual") .. " " .. tostring(status.fanSpeed or "--") .. "%")
+        or (fanMode == "curve" and noctalia.tr("panel.fan-mode.curve") or noctalia.tr("panel.fan-mode.auto"))
+    local curvePoints = {}
+    for _, point in ipairs(status.fanCurve or {}) do
+        table.insert(curvePoints, tostring(point.temp) .. "°→" .. tostring(point.speed) .. "%")
+    end
     table.insert(children, ui.column({ gap = 6 }, {
         ui.row({ align = "center", justify = "space_between" }, {
             sectionTitle(noctalia.tr("panel.fan-set")),
             ui.label({
-                text = noctalia.tr(fanMode == "manual" and "panel.fan-mode.manual" or "panel.fan-mode.curve"),
+                text = fanModeText,
                 fontSize = 12,
                 color = fanMode == "manual" and "primary" or "secondary",
             }),
@@ -195,7 +219,7 @@ local function renderPanel()
                 min = 0,
                 max = 100,
                 step = 5,
-                value = fanSlider or 0,
+                value = fanSlider or (fanMode == "manual" and status.fanSpeed or 50),
                 flexGrow = 1,
                 onChange = "onFanSlider",
             }),
@@ -203,9 +227,17 @@ local function renderPanel()
         }),
         ui.row({ gap = 8 }, {
             ui.button({
+                text = noctalia.tr("panel.fan-auto"),
+                variant = fanMode == "auto" and "primary" or "outline",
+                flexGrow = 1,
+                onClick = "onFanAuto",
+            }),
+            ui.button({
                 text = noctalia.tr("panel.fan-curve"),
                 variant = fanMode == "curve" and "primary" or "outline",
+                enabled = status.fanCurveConfigured == true,
                 flexGrow = 1,
+                tooltip = status.fanCurveConfigured and table.concat(curvePoints, "  ") or noctalia.tr("panel.fan-no-curve"),
                 onClick = "onFanCurve",
             }),
             ui.button({
@@ -219,13 +251,39 @@ local function renderPanel()
     table.insert(children, ui.separator({ thickness = 1, color = "outline/0.3", spacing = 8 }))
 
     -- 电池养护
-    table.insert(children, ui.button({
-        text = noctalia.tr("panel.battery-toggle"),
-        variant = "outline",
-        onClick = "onBatteryToggle",
+    table.insert(children, ui.row({ align = "center", justify = "space_between" }, {
+        ui.column({ gap = 2 }, {
+            sectionTitle(noctalia.tr("panel.battery-toggle")),
+            ui.label({ text = boolText(status.battery, "panel.on", "panel.off"), fontSize = 11, color = "on_surface_variant" }),
+        }),
+        ui.toggle({ checked = status.battery == true, enabled = type(status.battery) == "boolean", onChange = "onBatteryToggle" }),
     }))
 
-    panel.render(ui.column({ gap = 9, padding = 14, flexGrow = 1 }, children))
+    if type(status.errors) == "table" and #status.errors > 0 then
+        table.insert(children, ui.label({
+            text = noctalia.tr("panel.read-errors") .. ": " .. table.concat(status.errors, " · "),
+            fontSize = 11,
+            color = "error",
+            maxLines = 3,
+        }))
+    end
+    if type(status.updatedAtMs) == "number" then
+        table.insert(children, ui.label({
+            text = noctalia.tr("panel.updated") .. " " .. os.date("%H:%M:%S", math.floor(status.updatedAtMs / 1000)),
+            fontSize = 10,
+            color = "on_surface_variant",
+        }))
+    end
+
+    local body = {}
+    for i = 3, #children do
+        table.insert(body, children[i])
+    end
+    panel.render(ui.column({ gap = 0, padding = 14, flexGrow = 1 }, {
+        children[1],
+        children[2],
+        ui.scroll({ gap = 9, flexGrow = 1 }, body),
+    }))
 end
 
 function onOpen(_context)
@@ -248,28 +306,32 @@ function onFanSlider(value: string)
 end
 
 function onFanApply()
-    noctalia.state.set("command", { action = "fan-set", speed = fanSlider or 0 })
+    noctalia.state.set("command", { action = "fan-set", speed = fanSlider or status.fanSpeed or 50 })
 end
 
 function onFanCurve()
     noctalia.state.set("command", "fan-curve")
 end
 
-function onBatteryToggle()
-    noctalia.state.set("command", { action = "battery-toggle" })
+function onFanAuto()
+    noctalia.state.set("command", "fan-auto")
+end
+
+function onBatteryToggle(value: string)
+    noctalia.state.set("command", { action = "battery-set", enabled = value == "true" })
 end
 
 local function applyStatus(value)
     if type(value) == "table" then
         status = value
-        if fanSlider == nil then
-            local rpm = status.fanRpm or {}
-            if #rpm > 0 then
-                fanSlider = rpmToPercent(rpm[1])
-            else
-                fanSlider = 50
-            end
+        if status.fanMode == "manual" and type(status.fanSpeed) == "number"
+            and (lastFanMode ~= status.fanMode or lastFanSpeed ~= status.fanSpeed) then
+            fanSlider = status.fanSpeed
+        elseif fanSlider == nil then
+            fanSlider = 50
         end
+        lastFanMode = status.fanMode
+        lastFanSpeed = status.fanSpeed
     end
     if isOpen then
         renderPanel()

@@ -226,7 +226,7 @@ fn main() -> anyhow::Result<()> {
                     .context("读取电池养护状态失败")?;
             }
         },
-        Cmd::Status => match omen_rs::client::send("status") {
+        Cmd::Status => match omen_rs::client::send(&omen_rs::client::encode_query("status", cli.json)) {
             Ok(resp) => print!("{resp}"),
             Err(_) => println!("omend 未运行"),
         },
